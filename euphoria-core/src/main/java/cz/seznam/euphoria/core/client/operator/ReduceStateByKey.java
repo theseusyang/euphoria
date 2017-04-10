@@ -22,6 +22,7 @@ import cz.seznam.euphoria.core.client.dataset.partitioning.Partitioning;
 import cz.seznam.euphoria.core.client.dataset.windowing.Window;
 import cz.seznam.euphoria.core.client.dataset.windowing.Windowing;
 import cz.seznam.euphoria.core.client.flow.Flow;
+import cz.seznam.euphoria.core.client.functional.ResultType;
 import cz.seznam.euphoria.core.client.functional.UnaryFunction;
 import cz.seznam.euphoria.core.client.operator.state.State;
 import cz.seznam.euphoria.core.client.operator.state.StateFactory;
@@ -75,8 +76,11 @@ public class ReduceStateByKey<
       this.name = Objects.requireNonNull(name);
       this.input = Objects.requireNonNull(input);
     }
-    public <KEY> DatasetBuilder2<IN, KEY> keyBy(UnaryFunction<IN, KEY> keyExtractor) {
-      return new DatasetBuilder2<>(name, input, keyExtractor);
+    public <KEY> DatasetBuilder2<IN, KEY> keyBy(UnaryFunction<IN, KEY> keyFn) {
+      return new DatasetBuilder2<>(name, input, keyFn);
+    }
+    public <KEY> DatasetBuilder2<IN, KEY> keyBy(UnaryFunction<IN, KEY> keyFn, ResultType<KEY> keyType) {
+      return new DatasetBuilder2<IN, KEY>(name, input, new TypeSupport.DelegatedUnaryFunction<>(keyFn, keyType));
     }
   }
 

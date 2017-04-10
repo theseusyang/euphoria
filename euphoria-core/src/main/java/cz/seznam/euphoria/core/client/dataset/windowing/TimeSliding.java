@@ -15,6 +15,7 @@
  */
 package cz.seznam.euphoria.core.client.dataset.windowing;
 
+import cz.seznam.euphoria.core.client.functional.ResultType;
 import cz.seznam.euphoria.core.client.io.Context;
 import cz.seznam.euphoria.core.client.triggers.TimeTrigger;
 import cz.seznam.euphoria.core.client.triggers.Trigger;
@@ -29,6 +30,9 @@ import java.util.Iterator;
  */
 public final class TimeSliding<T>
     implements Windowing<T, TimeInterval> {
+
+  private static final ResultType<TimeInterval> TIME_INTERVAL_TYPE
+      = new ResultType<TimeInterval>() {};
 
   public static <T> TimeSliding<T> of(Duration duration, Duration step) {
     return new TimeSliding<>(duration.toMillis(), step.toMillis());
@@ -89,6 +93,10 @@ public final class TimeSliding<T>
     return slide;
   }
 
+  @Override
+  public ResultType<TimeInterval> getWindowType() {
+    return TIME_INTERVAL_TYPE;
+  }
 
   /**
    * Calculates window boundaries lazily during the iteration.

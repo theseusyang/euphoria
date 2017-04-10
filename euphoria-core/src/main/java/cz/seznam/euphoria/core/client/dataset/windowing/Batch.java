@@ -15,6 +15,7 @@
  */
 package cz.seznam.euphoria.core.client.dataset.windowing;
 
+import cz.seznam.euphoria.core.client.functional.ResultType;
 import cz.seznam.euphoria.core.client.triggers.NoopTrigger;
 import cz.seznam.euphoria.core.client.triggers.Trigger;
 
@@ -27,6 +28,9 @@ import java.util.Collections;
  */
 public final class Batch<T>
     implements Windowing<T, Batch.BatchWindow> {
+
+  private static final ResultType<BatchWindow> BATCH_WINDOW_TYPE
+      = new ResultType<BatchWindow>() {};
 
   public static final class BatchWindow extends Window implements Comparable<BatchWindow> {
     static final BatchWindow INSTANCE = new BatchWindow();
@@ -66,6 +70,11 @@ public final class Batch<T>
   @Override
   public Trigger<BatchWindow> getTrigger() {
     return NoopTrigger.get();
+  }
+
+  @Override
+  public ResultType<BatchWindow> getWindowType() {
+    return BATCH_WINDOW_TYPE;
   }
 
   @SuppressWarnings("unchecked")

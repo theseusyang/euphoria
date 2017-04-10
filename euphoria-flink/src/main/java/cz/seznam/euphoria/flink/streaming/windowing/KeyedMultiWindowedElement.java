@@ -35,8 +35,8 @@ public class KeyedMultiWindowedElement<WID extends Window, KEY, VALUE> {
   private VALUE value;
   private Iterable<WID> windows;
 
-  public KeyedMultiWindowedElement() {
-  }
+  // This class needs to ne POJO for effective serialization
+  public KeyedMultiWindowedElement() {}
 
   public KeyedMultiWindowedElement(KEY key,
                                    VALUE value,

@@ -17,6 +17,7 @@ package cz.seznam.euphoria.flink.batch;
 
 import cz.seznam.euphoria.core.client.dataset.windowing.Window;
 import cz.seznam.euphoria.core.client.dataset.windowing.Windowing;
+import cz.seznam.euphoria.core.client.functional.ResultType;
 import cz.seznam.euphoria.core.client.functional.UnaryFunction;
 import cz.seznam.euphoria.core.client.operator.ExtractEventTime;
 import cz.seznam.euphoria.core.client.operator.ReduceStateByKey;
@@ -31,6 +32,7 @@ import cz.seznam.euphoria.core.util.Settings;
 import cz.seznam.euphoria.flink.FlinkOperator;
 import cz.seznam.euphoria.flink.Utils;
 import cz.seznam.euphoria.flink.functions.PartitionerWrapper;
+import cz.seznam.euphoria.flink.types.TypeSupport;
 import cz.seznam.euphoria.shaded.guava.com.google.common.collect.Iterables;
 import org.apache.flink.api.common.functions.GroupReduceFunction;
 import org.apache.flink.api.common.operators.Order;
@@ -54,57 +56,73 @@ public class ReduceStateByKeyTranslator implements BatchOperatorTranslator<Reduc
   public DataSet translate(FlinkOperator<ReduceStateByKey> operator,
                            BatchExecutorContext context) {
 
-    int inputParallelism = Iterables.getOnlyElement(context.getInputOperators(operator)).getParallelism();
-    DataSet input = Iterables.getOnlyElement(context.getInputStreams(operator));
+    final int inputParallelism =
+        Iterables.getOnlyElement(context.getInputOperators(operator)).getParallelism();
+    final DataSet input =
+        Iterables.getOnlyElement(context.getInputStreams(operator));
 
-    ReduceStateByKey origOperator = operator.getOriginalOperator();
+    final ReduceStateByKey origOperator = operator.getOriginalOperator();
 
-    final Windowing windowing =
-        origOperator.getWindowing() == null
-            ? AttachedWindowing.INSTANCE
-            : origOperator.getWindowing();
+    final Windowing windowing;
+    TypeInformation windowType;
+    if (origOperator.getWindowing() == null) {
+      windowing = AttachedWindowing.INSTANCE;
+      windowType = TypeSupport.extractWindowType(input);
+    } else {
+      windowing = origOperator.getWindowing();
+      windowType = windowing.getWindowType() == null
+          ? null
+          : TypeSupport.toTypeInfo(windowing.getWindowType());
+    }
+    if (windowType == null) {
+      windowType = TypeInformation.of(Window.class);
+    }
 
-    final UnaryFunction udfKey = origOperator.getKeyExtractor();
-    final UnaryFunction udfValue = origOperator.getValueExtractor();
+    TypeSupport.FunctionMeta<UnaryFunction> udfKeyMeta =
+        TypeSupport.FunctionMeta.of(origOperator.getKeyExtractor());
+    TypeSupport.FunctionMeta<UnaryFunction> udfValMeta =
+        TypeSupport.FunctionMeta.of(origOperator.getValueExtractor());
 
     // ~ extract key/value + timestamp from input elements and assign windows
-    ExtractEventTime timeAssigner = origOperator.getEventTimeAssigner();
+    DataSet<BatchElement<?, Pair>> wAssigned;
+    {
+      // FIXME require keyExtractor to deliver `Comparable`s
+      UnaryFunction udfKey = udfKeyMeta.function;
+      UnaryFunction udfVal = udfValMeta.function;
+      ExtractEventTime timeAssigner = origOperator.getEventTimeAssigner();
+      wAssigned =
+          input.flatMap((i, c) -> {
+            BatchElement wel = (BatchElement) i;
 
-    // FIXME require keyExtractor to deliver `Comparable`s
-    DataSet<BatchElement> wAssigned =
-            input.flatMap((i, c) -> {
-              BatchElement wel = (BatchElement) i;
-
-              // assign timestamp if timeAssigner defined
-              if (timeAssigner != null) {
-                wel.setTimestamp(timeAssigner.extractTimestamp(wel.getElement()));
-              }
-              Iterable<Window> assigned = windowing.assignWindowsToElement(wel);
-              for (Window wid : assigned) {
-                Object el = wel.getElement();
-                c.collect(new BatchElement<>(
-                        wid,
-                        wel.getTimestamp(),
-                        Pair.of(udfKey.apply(el), udfValue.apply(el))));
-              }
-            })
-            .returns(BatchElement.class)
-            .name(operator.getName() + "::map-input")
-            .setParallelism(inputParallelism);
+            // assign timestamp if timeAssigner defined
+            if (timeAssigner != null) {
+              wel.setTimestamp(timeAssigner.extractTimestamp(wel.getElement()));
+            }
+            Iterable<Window> assigned = windowing.assignWindowsToElement(wel);
+            for (Window wid : assigned) {
+              Object el = wel.getElement();
+              c.collect(new BatchElement<>(wid,
+                  wel.getTimestamp(),
+                  Pair.of(udfKey.apply(el), udfVal.apply(el))));
+            }
+          })
+          .returns((TypeInformation) TypeSupport.forBatchElement(
+              windowType,
+              TypeSupport.forPair(
+                  TypeSupport.toTypeInfo(udfKeyMeta.rtype, Comparable.class),
+                  TypeSupport.toTypeInfo(udfValMeta.rtype))))
+          .name(operator.getName() + "::map-input")
+          .setParallelism(inputParallelism);
+    }
 
     // ~ reduce the data now
     DataSet<BatchElement<?, Pair>> reduced =
-        wAssigned.groupBy((KeySelector)
-            Utils.wrapQueryable(
-                // ~ FIXME if the underlying windowing is "non merging" we can group by
-                // "key _and_ window", thus, better utilizing the available resources
-                (BatchElement<?, Pair> we) -> (Comparable) we.getElement().getFirst(),
-                Comparable.class))
-            .sortGroup(Utils.wrapQueryable(
-                (KeySelector<BatchElement<?, ?>, Long>)
-                        BatchElement::getTimestamp, Long.class),
-                Order.ASCENDING)
-            .reduceGroup(new RSBKReducer(origOperator, stateStorageProvider, windowing))
+        // ~ FIXME if the underlying windowing is "non merging" we can group by
+        // "key _and_ window", thus, better utilizing the available resources
+        wAssigned.groupBy("element.first")
+            .sortGroup("timestamp", Order.ASCENDING)
+            .reduceGroup(new RSBKReducer(origOperator, stateStorageProvider,
+                windowing, windowType, udfKeyMeta.rtype, udfValMeta.rtype))
             .setParallelism(operator.getParallelism())
             .name(operator.getName() + "::reduce");
 
@@ -127,6 +145,10 @@ public class ReduceStateByKeyTranslator implements BatchOperatorTranslator<Reduc
           implements GroupReduceFunction<BatchElement<?, Pair>, BatchElement<?, Pair>>,
           ResultTypeQueryable<BatchElement<?, Pair>>
   {
+    private final TypeInformation windowType;
+    private final ResultType resultKeyType;
+    private final ResultType resultValueType;
+
     private final StateFactory<?, ?, State<?, ?>> stateFactory;
     private final StateMerger<?, ?, State<?, ?>> stateCombiner;
     private final StorageProvider stateStorageProvider;
@@ -137,13 +159,20 @@ public class ReduceStateByKeyTranslator implements BatchOperatorTranslator<Reduc
     RSBKReducer(
         ReduceStateByKey operator,
         StorageProvider stateStorageProvider,
-        Windowing windowing) {
+        Windowing windowing,
+        TypeInformation windowType,
+        ResultType resultKeyType,
+        ResultType resultValueType) {
 
       this.stateFactory = operator.getStateFactory();
       this.stateCombiner = operator.getStateMerger();
       this.stateStorageProvider = stateStorageProvider;
       this.windowing = windowing;
       this.trigger = windowing.getTrigger();
+
+      this.windowType = windowType;
+      this.resultKeyType = resultKeyType;
+      this.resultValueType = resultValueType;
     }
 
     @Override
@@ -168,7 +197,8 @@ public class ReduceStateByKeyTranslator implements BatchOperatorTranslator<Reduc
     @Override
     @SuppressWarnings("unchecked")
     public TypeInformation<BatchElement<?, Pair>> getProducedType() {
-      return TypeInformation.of((Class) BatchElement.class);
+      return (TypeInformation) TypeSupport.forBatchElement(windowType,
+          TypeSupport.forPair(resultKeyType, resultValueType));
     }
   }
 }

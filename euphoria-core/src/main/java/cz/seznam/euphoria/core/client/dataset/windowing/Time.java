@@ -19,6 +19,7 @@ import cz.seznam.euphoria.core.client.triggers.AfterFirstCompositeTrigger;
 import cz.seznam.euphoria.core.client.triggers.PeriodicTimeTrigger;
 import cz.seznam.euphoria.core.client.triggers.TimeTrigger;
 import cz.seznam.euphoria.core.client.triggers.Trigger;
+import cz.seznam.euphoria.core.client.functional.ResultType;
 import cz.seznam.euphoria.shaded.guava.com.google.common.base.Preconditions;
 
 import javax.annotation.Nullable;
@@ -32,6 +33,9 @@ import static java.util.Collections.singleton;
  * Time based tumbling windowing. Windows can't overlap.
  */
 public class Time<T> implements Windowing<T, TimeInterval> {
+
+  private static final ResultType<TimeInterval> TIME_INTERVAL_TYPE
+      = new ResultType<TimeInterval>() {};
 
   private final long durationMillis;
   @Nullable
@@ -89,5 +93,9 @@ public class Time<T> implements Windowing<T, TimeInterval> {
   public long getDuration() {
     return durationMillis;
   }
-}
 
+  @Override
+  public ResultType<TimeInterval> getWindowType() {
+    return TIME_INTERVAL_TYPE;
+  }
+}

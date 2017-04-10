@@ -16,10 +16,12 @@
 package cz.seznam.euphoria.flink.batch.io;
 
 import cz.seznam.euphoria.core.client.dataset.windowing.Batch;
+import cz.seznam.euphoria.core.client.functional.ResultType;
 import cz.seznam.euphoria.core.client.io.DataSource;
 import cz.seznam.euphoria.core.client.io.Partition;
 import cz.seznam.euphoria.core.client.io.Reader;
 import cz.seznam.euphoria.flink.batch.BatchElement;
+import cz.seznam.euphoria.flink.types.TypeSupport;
 import cz.seznam.euphoria.shaded.guava.com.google.common.base.Preconditions;
 import org.apache.flink.api.common.io.InputFormat;
 import org.apache.flink.api.common.io.statistics.BaseStatistics;
@@ -36,7 +38,7 @@ import java.util.function.BiFunction;
 public class DataSourceWrapper<T>
         implements InputFormat<BatchElement<Batch.BatchWindow, T>,
         PartitionWrapper<T>>,
-        ResultTypeQueryable<T> {
+        ResultTypeQueryable<BatchElement<Batch.BatchWindow, T>> {
 
   private final DataSource<T> dataSource;
   private final BiFunction<LocatableInputSplit[], Integer, InputSplitAssigner> splitAssignerFactory;
@@ -104,8 +106,7 @@ public class DataSourceWrapper<T>
   }
 
   @Override
-  @SuppressWarnings("unchecked")
-  public TypeInformation<T> getProducedType() {
-    return TypeInformation.of((Class) BatchElement.class);
+  public TypeInformation<BatchElement<Batch.BatchWindow, T>> getProducedType() {
+    return TypeSupport.forBatchElement(Batch.get().getWindowType(), (ResultType<T>) null);
   }
 }

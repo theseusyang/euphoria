@@ -31,8 +31,7 @@ public class BatchElement<W extends Window, T> implements WindowedElement<W, T> 
   private T element;
 
   // This class needs to ne POJO for effective serialization
-  public BatchElement() {
-  }
+  public BatchElement() {}
 
   public BatchElement(W window, long timestamp, T element) {
     this.window = window;

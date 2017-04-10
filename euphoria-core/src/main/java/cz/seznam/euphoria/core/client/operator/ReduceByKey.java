@@ -24,6 +24,7 @@ import cz.seznam.euphoria.core.client.dataset.windowing.Windowing;
 import cz.seznam.euphoria.core.client.flow.Flow;
 import cz.seznam.euphoria.core.client.functional.CombinableReduceFunction;
 import cz.seznam.euphoria.core.client.functional.ReduceFunction;
+import cz.seznam.euphoria.core.client.functional.ResultType;
 import cz.seznam.euphoria.core.client.functional.UnaryFunction;
 import cz.seznam.euphoria.core.client.graph.DAG;
 import cz.seznam.euphoria.core.client.io.Context;
@@ -81,57 +82,67 @@ public class ReduceByKey<
   public static class DatasetBuilder1<IN> {
     private final String name;
     private final Dataset<IN> input;
+
     DatasetBuilder1(String name, Dataset<IN> input) {
       this.name = Objects.requireNonNull(name);
       this.input = Objects.requireNonNull(input);
     }
-    public <KEY> DatasetBuilder2<IN, KEY> keyBy(UnaryFunction<IN, KEY> keyExtractor) {
-      return new DatasetBuilder2<>(name, input, keyExtractor);
+
+    public <KEY> DatasetBuilder2<IN, KEY> keyBy(UnaryFunction<IN, KEY> keyFn) {
+      return new DatasetBuilder2<>(name, input, keyFn);
+    }
+
+    public <KEY> DatasetBuilder2<IN, KEY> keyBy(UnaryFunction<IN, KEY> keyFn, ResultType<KEY> keyType) {
+      return new DatasetBuilder2<IN, KEY>(name, input, new TypeSupport.DelegatedUnaryFunction<>(keyFn, keyType));
     }
   }
 
   public static class DatasetBuilder2<IN, KEY> {
     private final String name;
     private final Dataset<IN> input;
-    private final UnaryFunction<IN, KEY> keyExtractor;
-    DatasetBuilder2(String name, Dataset<IN> input, UnaryFunction<IN, KEY> keyExtractor) {
+    private final UnaryFunction<IN, KEY> keyFn;
+
+    DatasetBuilder2(String name, Dataset<IN> input, UnaryFunction<IN, KEY> keyFn) {
       this.name = Objects.requireNonNull(name);
       this.input = Objects.requireNonNull(input);
-      this.keyExtractor = Objects.requireNonNull(keyExtractor);
+      this.keyFn = Objects.requireNonNull(keyFn);
     }
+
     public <VALUE> DatasetBuilder3<IN, KEY, VALUE> valueBy(UnaryFunction<IN, VALUE> valueExtractor) {
-      return new DatasetBuilder3<>(name, input, keyExtractor, valueExtractor);
+      return new DatasetBuilder3<>(name, input, keyFn, valueExtractor);
     }
+
     public <OUT> DatasetBuilder4<IN, KEY, IN, OUT> reduceBy(ReduceFunction<IN, OUT> reducer) {
-      return new DatasetBuilder4<>(name, input, keyExtractor, e-> e, reducer);
+      return new DatasetBuilder4<>(name, input, keyFn, e-> e, reducer);
     }
+
     @SuppressWarnings("unchecked")
     public DatasetBuilder4<IN, KEY, IN, IN> combineBy(CombinableReduceFunction<IN> reducer) {
-      return new DatasetBuilder4(name, input, keyExtractor, e -> e, reducer);
+      return new DatasetBuilder4(name, input, keyFn, e -> e, reducer);
     }
   }
 
   public static class DatasetBuilder3<IN, KEY, VALUE> {
     private final String name;
     private final Dataset<IN> input;
-    private final UnaryFunction<IN, KEY> keyExtractor;
+    private final UnaryFunction<IN, KEY> keyFn;
     private final UnaryFunction<IN, VALUE> valueExtractor;
     DatasetBuilder3(String name,
                     Dataset<IN> input,
-                    UnaryFunction<IN, KEY> keyExtractor,
+                    UnaryFunction<IN, KEY> keyFn,
                     UnaryFunction<IN, VALUE> valueExtractor) {
       this.name = Objects.requireNonNull(name);
       this.input = Objects.requireNonNull(input);
-      this.keyExtractor = Objects.requireNonNull(keyExtractor);
+      this.keyFn = Objects.requireNonNull(keyFn);
       this.valueExtractor = Objects.requireNonNull(valueExtractor);
     }
     public <OUT> DatasetBuilder4<IN, KEY, VALUE, OUT> reduceBy(
         ReduceFunction<VALUE, OUT> reducer) {
-      return new DatasetBuilder4<>(name, input, keyExtractor, valueExtractor, reducer);
+      return new DatasetBuilder4<>(name, input, keyFn, valueExtractor, reducer);
     }
     public DatasetBuilder4<IN, KEY, VALUE, VALUE> combineBy(
         CombinableReduceFunction<VALUE> reducer) {
-      return new DatasetBuilder4<>(name, input, keyExtractor, valueExtractor, reducer);
+      return new DatasetBuilder4<>(name, input, keyFn, valueExtractor, reducer);
     }
   }
 
@@ -140,12 +151,12 @@ public class ReduceByKey<
           implements OutputBuilder<Pair<KEY, OUT>> {
     private final String name;
     private final Dataset<IN> input;
-    private final UnaryFunction<IN, KEY> keyExtractor;
+    private final UnaryFunction<IN, KEY> keyFn;
     private final UnaryFunction<IN, VALUE> valueExtractor;
     private final ReduceFunction<VALUE, OUT> reducer;
     DatasetBuilder4(String name,
                     Dataset<IN> input,
-                    UnaryFunction<IN, KEY> keyExtractor,
+                    UnaryFunction<IN, KEY> keyFn,
                     UnaryFunction<IN, VALUE> valueExtractor,
                     ReduceFunction<VALUE, OUT> reducer) {
 
@@ -154,7 +165,7 @@ public class ReduceByKey<
 
       this.name = Objects.requireNonNull(name);
       this.input = Objects.requireNonNull(input);
-      this.keyExtractor = Objects.requireNonNull(keyExtractor);
+      this.keyFn = Objects.requireNonNull(keyFn);
       this.valueExtractor = Objects.requireNonNull(valueExtractor);
       this.reducer = Objects.requireNonNull(reducer);
     }
@@ -166,13 +177,13 @@ public class ReduceByKey<
     public  <W extends Window>
     DatasetBuilder5<IN, KEY, VALUE, OUT, W>
     windowBy(Windowing<IN, W> windowing, ExtractEventTime<IN> eventTimeAssigner) {
-      return new DatasetBuilder5<>(name, input, keyExtractor, valueExtractor,
+      return new DatasetBuilder5<>(name, input, keyFn, valueExtractor,
               reducer, Objects.requireNonNull(windowing), eventTimeAssigner, this);
     }
 
     @Override
     public Dataset<Pair<KEY, OUT>> output() {
-      return new DatasetBuilder5<>(name, input, keyExtractor, valueExtractor,
+      return new DatasetBuilder5<>(name, input, keyFn, valueExtractor,
               reducer, null, null, this)
           .output();
     }
@@ -184,7 +195,7 @@ public class ReduceByKey<
       implements OutputBuilder<Pair<KEY, OUT>> {
     private final String name;
     private final Dataset<IN> input;
-    private final UnaryFunction<IN, KEY> keyExtractor;
+    private final UnaryFunction<IN, KEY> keyFn;
     private final UnaryFunction<IN, VALUE> valueExtractor;
     private final ReduceFunction<VALUE, OUT> reducer;
     @Nullable
@@ -194,7 +205,7 @@ public class ReduceByKey<
 
     DatasetBuilder5(String name,
                     Dataset<IN> input,
-                    UnaryFunction<IN, KEY> keyExtractor,
+                    UnaryFunction<IN, KEY> keyFn,
                     UnaryFunction<IN, VALUE> valueExtractor,
                     ReduceFunction<VALUE, OUT> reducer,
                     @Nullable Windowing<IN, W> windowing,
@@ -206,7 +217,7 @@ public class ReduceByKey<
 
       this.name = Objects.requireNonNull(name);
       this.input = Objects.requireNonNull(input);
-      this.keyExtractor = Objects.requireNonNull(keyExtractor);
+      this.keyFn = Objects.requireNonNull(keyFn);
       this.valueExtractor = Objects.requireNonNull(valueExtractor);
       this.reducer = Objects.requireNonNull(reducer);
       this.windowing = windowing;
@@ -218,7 +229,7 @@ public class ReduceByKey<
       Flow flow = input.getFlow();
       ReduceByKey<IN, IN, KEY, VALUE, KEY, OUT, W>
           reduce =
-          new ReduceByKey<>(name, flow, input, keyExtractor, valueExtractor,
+          new ReduceByKey<>(name, flow, input, keyFn, valueExtractor,
               windowing, eventTimeAssigner, reducer, getPartitioning());
       flow.add(reduce);
       return reduce.output();
@@ -239,13 +250,13 @@ public class ReduceByKey<
   ReduceByKey(String name,
               Flow flow,
               Dataset<IN> input,
-              UnaryFunction<KIN, KEY> keyExtractor,
+              UnaryFunction<KIN, KEY> keyFn,
               UnaryFunction<KIN, VALUE> valueExtractor,
               @Nullable Windowing<IN, W> windowing,
               @Nullable ExtractEventTime<IN> eventTimeAssigner,
               ReduceFunction<VALUE, OUT> reducer,
               Partitioning<KEY> partitioning) {
-    super(name, flow, input, keyExtractor, windowing, eventTimeAssigner, partitioning);
+    super(name, flow, input, keyFn, windowing, eventTimeAssigner, partitioning);
     this.reducer = reducer;
     this.valueExtractor = valueExtractor;
   }

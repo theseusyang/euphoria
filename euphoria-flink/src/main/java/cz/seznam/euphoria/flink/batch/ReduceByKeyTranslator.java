@@ -26,15 +26,15 @@ import cz.seznam.euphoria.core.client.util.Pair;
 import cz.seznam.euphoria.flink.FlinkOperator;
 import cz.seznam.euphoria.flink.Utils;
 import cz.seznam.euphoria.flink.functions.PartitionerWrapper;
+import cz.seznam.euphoria.flink.types.TypeSupport;
 import cz.seznam.euphoria.shaded.guava.com.google.common.base.Preconditions;
 import cz.seznam.euphoria.shaded.guava.com.google.common.collect.Iterables;
 import org.apache.flink.api.common.functions.ReduceFunction;
-import org.apache.flink.api.common.typeinfo.TypeHint;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.DataSet;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.java.operators.FlatMapOperator;
 import org.apache.flink.api.java.operators.Operator;
-import org.apache.flink.api.java.tuple.Tuple2;
 
 import java.util.Arrays;
 
@@ -55,15 +55,28 @@ public class ReduceByKeyTranslator implements BatchOperatorTranslator<ReduceByKe
 
     int inputParallelism =
             Iterables.getOnlyElement(context.getInputOperators(operator)).getParallelism();
-    DataSet input =
+    final DataSet input =
             Iterables.getOnlyElement(context.getInputStreams(operator));
 
-    ReduceByKey origOperator = operator.getOriginalOperator();
+    final ReduceByKey origOperator = operator.getOriginalOperator();
     final UnaryFunction<Iterable, Object> reducer = origOperator.getReducer();
-    final Windowing windowing =
-        origOperator.getWindowing() == null
-        ? AttachedWindowing.INSTANCE
-        : origOperator.getWindowing();
+
+    final Windowing windowing;
+    TypeInformation windowType;
+    if (origOperator.getWindowing() == null) {
+      windowing = AttachedWindowing.INSTANCE;
+      windowType = TypeSupport.extractWindowType(input);
+    } else {
+      windowing = origOperator.getWindowing();
+      windowType = windowing.getWindowType() == null
+          ? null
+          : TypeSupport.toTypeInfo(windowing.getWindowType());
+    }
+    if (windowType == null) {
+      // ~ we just assume/hope that what ever windows will be produced
+      // are `Comparable` since that is what the `.groupBy` operator requires
+      windowType = TypeInformation.of(Comparable.class);
+    }
 
     Preconditions.checkState(origOperator.isCombinable(),
         "Non-combinable ReduceByKey not supported!");
@@ -74,14 +87,19 @@ public class ReduceByKeyTranslator implements BatchOperatorTranslator<ReduceByKe
         "Stateful triggers not supported!");
 
     // ~ prepare key and value functions
-    final UnaryFunction udfKey = origOperator.getKeyExtractor();
-    final UnaryFunction udfValue = origOperator.getValueExtractor();
+    TypeSupport.FunctionMeta<UnaryFunction> udfKeyMeta =
+        TypeSupport.FunctionMeta.of(origOperator.getKeyExtractor());
+    TypeSupport.FunctionMeta<UnaryFunction> udfValMeta =
+        TypeSupport.FunctionMeta.of(origOperator.getValueExtractor());
 
     // ~ extract key/value from input elements and assign windows
     DataSet<BatchElement<Window, Pair>> tuples;
     {
       // FIXME require keyExtractor to deliver `Comparable`s
+      // FIXME require windows to be `Comparable`
 
+      UnaryFunction udfKey = udfKeyMeta.function;
+      UnaryFunction udfVal = udfValMeta.function;
       ExtractEventTime timeAssigner = origOperator.getEventTimeAssigner();
       FlatMapOperator<Object, BatchElement<Window, Pair>> wAssigned =
           input.flatMap((i, c) -> {
@@ -97,18 +115,21 @@ public class ReduceByKeyTranslator implements BatchOperatorTranslator<ReduceByKe
                   ? ((TimedWindow) wid).maxTimestamp()
                   : wel.getTimestamp();
               c.collect(new BatchElement<>(
-                      wid, stamp, Pair.of(udfKey.apply(el), udfValue.apply(el))));
+                      wid, stamp, Pair.of(udfKey.apply(el), udfVal.apply(el))));
             }
           });
-      tuples = wAssigned
-          .name(operator.getName() + "::map-input")
-          .setParallelism(inputParallelism)
-          .returns(new TypeHint<BatchElement<Window, Pair>>() {});
+      tuples = wAssigned.name(operator.getName() + "::map-input")
+                   .setParallelism(inputParallelism)
+                   .returns((TypeInformation) TypeSupport.forBatchElement(
+                       windowType,
+                       TypeSupport.forPair(
+                           TypeSupport.toTypeInfo(udfKeyMeta.rtype, Comparable.class),
+                           TypeSupport.toTypeInfo(udfValMeta.rtype))));
     }
 
     // ~ reduce the data now
     Operator<BatchElement<Window, Pair>, ?> reduced =
-            tuples.groupBy(new RBKKeySelector())
+            tuples.groupBy("window", "element.first")
                     .reduce(new RBKReducer(reducer))
                     .setParallelism(operator.getParallelism())
                     .name(operator.getName() + "::reduce");
@@ -133,21 +154,6 @@ public class ReduceByKeyTranslator implements BatchOperatorTranslator<ReduceByKe
   }
 
   // ------------------------------------------------------------------------------
-
-  /**
-   * Produces Tuple2[Window, Element Key]
-   */
-  @SuppressWarnings("unchecked")
-  static class RBKKeySelector
-          implements KeySelector<BatchElement<Window, Pair>, Tuple2<Comparable, Comparable>> {
-    
-    @Override
-    public Tuple2<Comparable, Comparable> getKey(
-            BatchElement<Window, Pair> value) {
-
-      return new Tuple2(value.getWindow(), value.getElement().getKey());
-    }
-  }
 
   static class RBKReducer
         implements ReduceFunction<BatchElement<Window, Pair>> {
