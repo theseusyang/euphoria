@@ -15,8 +15,11 @@
  */
 package cz.seznam.euphoria.core.client.functional;
 
+import cz.seznam.euphoria.core.annotation.stability.Experimental;
+
 import java.io.Serializable;
 
+@Experimental
 public interface DelegatedFunction<F> extends Serializable {
 
   F getDelegate();

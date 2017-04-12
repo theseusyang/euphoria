@@ -15,8 +15,9 @@
  */
 package cz.seznam.euphoria.core.client.dataset.windowing;
 
-import cz.seznam.euphoria.core.client.triggers.Trigger;
+import cz.seznam.euphoria.core.annotation.stability.Experimental;
 import cz.seznam.euphoria.core.client.functional.ResultType;
+import cz.seznam.euphoria.core.client.triggers.Trigger;
 
 import java.io.Serializable;
 
@@ -57,6 +58,7 @@ public interface Windowing<T, W extends Window> extends Serializable {
    *          strategy are to be handled opaque, otherwise a type hint about
    *          the window types
    */
+  @Experimental
   default ResultType<W> getWindowType() {
     return null;
   }

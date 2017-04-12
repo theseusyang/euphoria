@@ -17,6 +17,7 @@ package cz.seznam.euphoria.core.client.operator;
 
 import cz.seznam.euphoria.core.annotation.operator.Recommended;
 import cz.seznam.euphoria.core.annotation.operator.StateComplexity;
+import cz.seznam.euphoria.core.annotation.stability.Experimental;
 import cz.seznam.euphoria.core.client.dataset.Dataset;
 import cz.seznam.euphoria.core.client.dataset.partitioning.Partitioning;
 import cz.seznam.euphoria.core.client.dataset.windowing.Window;
@@ -92,6 +93,7 @@ public class ReduceByKey<
       return new DatasetBuilder2<>(name, input, keyFn);
     }
 
+    @Experimental
     public <KEY> DatasetBuilder2<IN, KEY> keyBy(UnaryFunction<IN, KEY> keyFn, ResultType<KEY> keyType) {
       return new DatasetBuilder2<IN, KEY>(name, input, new TypeSupport.DelegatedUnaryFunction<>(keyFn, keyType));
     }
